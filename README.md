@@ -24,6 +24,20 @@ PartSplice 3D ist eine Windows-Anwendung zum Aufteilen von STL-, 3MF- und STEP-M
 - neue Versionen über die offizielle GitHub-Release-Seite prüfen und herunterladen
 - fehlerhafte Volumenmodelle mit dem Windows-3D-Druckdienst prüfen und reparieren
 
+## Screenshots
+
+| Startdialog | Mehrpunkt-Schnitt anlegen |
+| --- | --- |
+| ![Startdialog von PartSplice 3D](docs/screenshots/start-dialog.png) | ![Mehrpunkt-Schnitt mit mehreren Knickpunkten](docs/screenshots/multipoint-cut.png) |
+
+| Schnittergebnis | Verbinder bearbeiten |
+| --- | --- |
+| ![Farbig dargestelltes Schnittergebnis](docs/screenshots/cut-result.png) | ![Eigenschaften eines einzelnen Verbinders](docs/screenshots/connector-properties.png) |
+
+### Verbinder-Testmuster
+
+![Dialog zum Erzeugen und Bewerten von Verbinder-Testmustern](docs/screenshots/connector-test-pattern.png)
+
 ## Unterstützte Plattform
 
 Die Anwendung ist derzeit für 64-Bit-Windows 10 und Windows 11 vorgesehen. Die Modellreparatur verwendet Windows-spezifische 3D-Druck-Schnittstellen.
