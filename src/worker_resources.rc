@@ -1,0 +1,34 @@
+#include "version.h"
+
+1 VERSIONINFO
+ FILEVERSION PARTSPLICE_VERSION_COMMA
+ PRODUCTVERSION PARTSPLICE_VERSION_COMMA
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040704b0"
+        BEGIN
+            VALUE "CompanyName", "mpl1337\0"
+            VALUE "FileDescription", "PartSplice 3D Geometrie-Worker\0"
+            VALUE "FileVersion", PARTSPLICE_VERSION_STRING "\0"
+            VALUE "InternalName", "PartSpliceWorker\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 mpl1337\0"
+            VALUE "OriginalFilename", "PartSpliceWorker.exe\0"
+            VALUE "ProductName", "PartSplice 3D\0"
+            VALUE "ProductVersion", PARTSPLICE_VERSION_STRING "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0407, 1200
+    END
+END

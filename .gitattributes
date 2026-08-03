@@ -1,0 +1,26 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+# Quellcode und Dokumentation im Repository einheitlich halten.
+*.c text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Drittanbieter-Lizenztexte bleiben inhaltlich und typografisch unverändert.
+third_party_licenses/** -whitespace
+
+# Windows-Skripte und Ressourcendateien mit nativen Zeilenenden auschecken.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.rc text eol=crlf
+
+# Binärdateien niemals durch Git verändern lassen.
+*.ico binary
+*.png binary
+*.ttf binary
