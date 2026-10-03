@@ -411,13 +411,36 @@ void drawModelRepairPrompt(App& app) {
     }
     if (!ImGui::BeginPopupModal("Modellprüfung##Reparatur", nullptr,
                                 ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::TextColored({1.0f, 0.48f, 0.18f, 1.0f}, "Das Modell ist kein wasserdichter Volumenkörper.");
+    const bool valid = app.meshDiagnostics.validSolid();
+    if (app.repairRunning) {
+        ImGui::TextUnformatted("Windows-Modellreparatur läuft ...");
+        if (app.repairProgress) {
+            const std::string phase = localizedText(windowsRepairStageText(
+                app.repairProgress->load(std::memory_order_relaxed)));
+            ImGui::TextWrapped("%s", phase.c_str());
+        }
+        if (ImGui::Button("Reparatur abbrechen")) cancelWindowsMeshRepair(app);
+        ImGui::EndPopup();
+        return;
+    }
+    if (app.repairReportPartId == app.selectedPartId && !app.repairReport.empty()) {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 560.0f);
+        const std::string report = localizedText(app.repairReport);
+        ImGui::TextWrapped("%s", report.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Separator();
+    }
+    if (valid)
+        ImGui::TextColored({0.30f, 0.92f, 0.48f, 1.0f}, "Wasserdichter Volumenkörper");
+    else
+        ImGui::TextColored({1.0f, 0.48f, 0.18f, 1.0f}, "Das Modell ist kein wasserdichter Volumenkörper.");
+    ImGui::Text("Entartete Dreiecke: %zu", app.meshDiagnostics.degenerateTriangles);
     ImGui::Text("Offene Kanten: %zu", app.meshDiagnostics.openEdges);
     ImGui::Text("Mehrfach belegte Kanten: %zu", app.meshDiagnostics.nonManifoldEdges);
     if (app.meshDiagnostics.orientationConflicts > 0)
         ImGui::Text("Falsch ausgerichtete Kanten: %zu", app.meshDiagnostics.orientationConflicts);
     ImGui::Spacing();
-    ImGui::TextWrapped("Für saubere Schnitte und Verbinder sollte das Modell zuerst repariert werden. "
+    if (!valid) ImGui::TextWrapped("Für saubere Schnitte und Verbinder sollte das Modell zuerst repariert werden. "
                        "Die Originaldatei auf der Festplatte bleibt unverändert.");
     if (const PartRecord* selected = app.selectedPart(); selected && selected->mesh &&
         !selected->mesh->triangleMaterials.empty()) {
@@ -426,16 +449,22 @@ void drawModelRepairPrompt(App& app) {
                            "PartSplice prüft und meldet das Ergebnis.");
     }
     ImGui::Spacing();
+    if (valid) {
+        if (ImGui::Button("OK", {215, 36})) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     if (ImGui::Button("Jetzt mit Windows reparieren", {245, 36})) {
         startWindowsMeshRepair(app);
-        ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
+    ImGui::BeginDisabled(app.repairRunning);
     if (ImGui::Button("Ohne Reparatur fortfahren", {215, 36})) {
         app.status = "Reparatur übersprungen. Die problematischen Kanten bleiben markiert; Schnitte können fehlschlagen.";
         app.showMeshIssues = true;
         ImGui::CloseCurrentPopup();
     }
+    ImGui::EndDisabled();
     ImGui::EndPopup();
 }
 
@@ -497,6 +526,7 @@ void drawModelInfoWindow(App& app) {
         ImGui::Text("Offen: %zu | Mehrfach: %zu | Ausrichtung: %zu",
                     app.meshDiagnostics.openEdges, app.meshDiagnostics.nonManifoldEdges,
                     app.meshDiagnostics.orientationConflicts);
+        ImGui::Text("Entartete Dreiecke: %zu", app.meshDiagnostics.degenerateTriangles);
         ImGui::Checkbox("Problemstellen im Modell anzeigen", &app.showMeshIssues);
         if (app.repairRunning) {
             if (ImGui::Button("Reparatur abbrechen", {-1, 34})) cancelWindowsMeshRepair(app);
