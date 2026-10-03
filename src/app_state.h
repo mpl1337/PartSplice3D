@@ -111,6 +111,9 @@ struct App {
     int backgroundReplaceOperationId = -1;
     std::optional<PendingCutRestoreState> backgroundPendingCutRestore;
     bool repairRunning = false;
+    std::shared_ptr<std::atomic<WindowsRepairStage>> repairProgress;
+    std::string repairReport;
+    int repairReportPartId = -1;
     int repairTargetPartId = -1;
     std::future<IndexedRepairResult> repairFuture;
     std::shared_ptr<std::atomic_bool> repairCancel;
