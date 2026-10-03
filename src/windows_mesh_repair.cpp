@@ -2,6 +2,7 @@
 
 #include "three_mf.h"
 #include "safe_temp.h"
+#include "app_log.h"
 
 #include <chrono>
 #include <algorithm>
@@ -25,7 +26,26 @@
 #include <winrt/windows.storage.h>
 #endif
 
+const char* windowsRepairStageText(WindowsRepairStage stage) {
+    switch (stage) {
+        case WindowsRepairStage::Preparing: return "Temporäre 3MF wird vorbereitet.";
+        case WindowsRepairStage::Initializing: return "Windows-3D-Schnittstelle wird initialisiert.";
+        case WindowsRepairStage::Loading: return "Windows lädt das Modell.";
+        case WindowsRepairStage::StartingRepair: return "Windows-Reparatur wird angefordert (RepairAsync).";
+        case WindowsRepairStage::Repairing: return "Windows hat die Reparatur gestartet (RepairAsync).";
+        case WindowsRepairStage::Saving: return "Windows-Reparatur beendet; Ergebnis wird gespeichert.";
+        case WindowsRepairStage::Reading: return "Repariertes Ergebnis wird eingelesen.";
+        case WindowsRepairStage::Indexing: return "Ergebnis wird für die Modellprüfung vorbereitet.";
+    }
+    return "Unbekannte Reparaturphase.";
+}
+
 namespace {
+void reportStage(std::atomic<WindowsRepairStage>* progress, WindowsRepairStage stage) {
+    if (progress) progress->store(stage, std::memory_order_relaxed);
+    appLogInfo(windowsRepairStageText(stage));
+}
+
 
 #ifdef _WIN32
 using Microsoft::WRL::ComPtr;
@@ -61,7 +81,9 @@ HRESULT waitFor(const ComPtr<T>& operation, const std::atomic_bool* cancelReques
     if (status == AsyncStatus::Completed) return S_OK;
     if (status == AsyncStatus::Canceled) return E_ABORT;
     HRESULT error = E_FAIL;
-    return SUCCEEDED(info->get_ErrorCode(&error)) ? error : E_FAIL;
+    result = info->get_ErrorCode(&error);
+    if (FAILED(result)) return result;
+    return FAILED(error) ? error : E_FAIL;
 }
 
 template <class T>
@@ -136,7 +158,8 @@ HRESULT writeStreamToFile(ABI::Windows::Storage::Streams::IRandomAccessStream* r
         if (FAILED(result)) return result;
         UINT32 length = 0;
         result = readBuffer->get_Length(&length);
-        if (FAILED(result) || length == 0) break;
+        if (FAILED(result)) return result;
+        if (length == 0) break;
         ComPtr<Windows::Storage::Streams::IBufferByteAccess> bytes;
         result = readBuffer.As(&bytes);
         if (FAILED(result)) return result;
@@ -146,11 +169,14 @@ HRESULT writeStreamToFile(ABI::Windows::Storage::Streams::IRandomAccessStream* r
         output.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(length));
         if (!output) return E_FAIL;
     }
-    return S_OK;
+    output.flush();
+    return output ? S_OK : E_FAIL;
 }
 
 HRESULT repairThreeMf(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath,
-                      const std::atomic_bool* cancelRequested) {
+                      const std::atomic_bool* cancelRequested,
+                      std::atomic<WindowsRepairStage>* progress) {
+    reportStage(progress, WindowsRepairStage::Loading);
     ComPtr<ABI::Windows::Storage::Streams::IRandomAccessStream> inputStream;
     HRESULT result = openReadStream(inputPath, inputStream, cancelRequested);
     if (FAILED(result)) return result;
@@ -169,13 +195,16 @@ HRESULT repairThreeMf(const std::filesystem::path& inputPath, const std::filesys
     if (FAILED(result)) return result;
 
     ComPtr<ABI::Windows::Foundation::IAsyncAction> repairOperation;
+    reportStage(progress, WindowsRepairStage::StartingRepair);
     result = model->RepairAsync(repairOperation.GetAddressOf());
     if (FAILED(result)) return result;
+    reportStage(progress, WindowsRepairStage::Repairing);
     result = waitFor(repairOperation, cancelRequested);
     if (FAILED(result)) return result;
     result = repairOperation->GetResults();
     if (FAILED(result)) return result;
 
+    reportStage(progress, WindowsRepairStage::Saving);
     ComPtr<ABI::Windows::Foundation::IAsyncAction> packageOperation;
     result = package->SaveModelToPackageAsync(model.Get(), packageOperation.GetAddressOf());
     if (FAILED(result)) return result;
@@ -237,8 +266,10 @@ TriangleMesh combineObjects(const std::vector<ThreeMfObject>& objects) {
 } // namespace
 
 WindowsMeshRepairResult repairMeshWithWindowsService(
-    const TriangleMesh& mesh, const std::atomic_bool* cancelRequested) {
+    const TriangleMesh& mesh, const std::atomic_bool* cancelRequested,
+    std::atomic<WindowsRepairStage>* progress) {
     WindowsMeshRepairResult response;
+    reportStage(progress, WindowsRepairStage::Preparing);
     try {
 #ifdef _WIN32
     const std::filesystem::path temporaryDirectory = std::filesystem::temp_directory_path();
@@ -271,13 +302,14 @@ WindowsMeshRepairResult repairMeshWithWindowsService(
         return response;
     }
 
+    reportStage(progress, WindowsRepairStage::Initializing);
     const HRESULT initialized = RoInitialize(RO_INIT_MULTITHREADED);
     if (FAILED(initialized)) {
         response.message = "Windows-3D-Dienst konnte nicht initialisiert werden: " + hresultText(initialized);
         return response;
     }
     struct ApartmentGuard { ~ApartmentGuard() { RoUninitialize(); } } apartmentGuard;
-    const HRESULT repaired = repairThreeMf(inputPath, outputPath, cancelRequested);
+    const HRESULT repaired = repairThreeMf(inputPath, outputPath, cancelRequested, progress);
     if (FAILED(repaired)) {
         response.canceled = repaired == E_ABORT;
         if (repaired == E_ABORT)
@@ -289,6 +321,7 @@ WindowsMeshRepairResult repairMeshWithWindowsService(
         return response;
     }
 
+    reportStage(progress, WindowsRepairStage::Reading);
     ThreeMfLoadResult loaded = loadThreeMf(outputPath);
     if (!loaded.ok || loaded.objects.empty()) {
         response.message = "Repariertes 3MF-Ergebnis konnte nicht gelesen werden: " + loaded.message;
