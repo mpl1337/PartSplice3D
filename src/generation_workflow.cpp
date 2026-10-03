@@ -679,21 +679,28 @@ bool rebuildMovedAppliedConnector(App& app, int operationId) {
 void startWindowsMeshRepair(App& app) {
     const PartRecord* target = app.selectedPart();
     if (target == nullptr || app.busy()) return;
-    app.repairTargetPartId = target->id;
     if (!target->mesh) return;
+    app.repairTargetPartId = target->id;
+    app.repairReportPartId = target->id;
+    app.repairReport.clear();
+    app.repairProgress = std::make_shared<std::atomic<WindowsRepairStage>>(WindowsRepairStage::Preparing);
+    const auto progress = app.repairProgress;
+    appLogInfo("Windows-Modellreparatur angefordert für Teil " + std::to_string(target->id));
     std::shared_ptr<const TriangleMesh> mesh = target->mesh;
     app.repairCancel = std::make_shared<std::atomic_bool>(false);
     const std::shared_ptr<std::atomic_bool> cancel = app.repairCancel;
     app.closeAfterRepair = false;
     app.repairRunning = true;
+    app.showRepairPrompt = true;
     app.status = "Windows-3D-Reparaturdienst arbeitet. Das Original auf der Festplatte bleibt unverändert ...";
     try {
         app.repairFuture = std::async(std::launch::async,
-            [mesh = std::move(mesh), cancel]() -> IndexedRepairResult {
+            [mesh = std::move(mesh), cancel, progress]() -> IndexedRepairResult {
                 IndexedRepairResult prepared;
                 try {
-                    prepared.repair = repairMeshWithWindowsService(*mesh, cancel.get());
+                    prepared.repair = repairMeshWithWindowsService(*mesh, cancel.get(), progress.get());
                     if (prepared.repair.ok && !prepared.repair.canceled) {
+                        progress->store(WindowsRepairStage::Indexing, std::memory_order_relaxed);
                         prepared.mesh = std::make_shared<const TriangleMesh>(
                             std::move(prepared.repair.mesh));
                         prepared.spatialIndex =
@@ -722,6 +729,11 @@ void startWindowsMeshRepair(App& app) {
         app.repairTargetPartId = -1;
         app.status = "Windows-Reparatur konnte nicht gestartet werden.";
     }
+    if (!app.repairRunning) {
+        app.repairReport = app.status;
+        appLogError(app.repairReport);
+        app.showRepairPrompt = true;
+    }
 }
 
 void cancelWindowsMeshRepair(App& app) {
@@ -747,6 +759,10 @@ void pollWindowsMeshRepair(App& app) {
     WindowsMeshRepairResult& result = prepared.repair;
     app.repairRunning = false;
     app.repairCancel.reset();
+    const std::string phase = app.repairProgress
+        ? windowsRepairStageText(app.repairProgress->load(std::memory_order_relaxed)) : "";
+    app.repairReport = result.message + "\nLetzte Phase: " + phase;
+    app.showRepairPrompt = true;
 
     if (result.canceled) {
         app.status = result.message.empty() ? "Windows-Reparatur abgebrochen." : result.message;
@@ -754,8 +770,7 @@ void pollWindowsMeshRepair(App& app) {
         return;
     }
     if (!result.ok) {
-        appLogError(result.message.empty() ? "Windows-Modellreparatur fehlgeschlagen."
-                                           : result.message);
+        appLogError(app.repairReport);
         app.status = result.message + " Die Datei kann alternativ in Bambu Studio repariert und danach erneut geöffnet werden.";
         app.showRepairPrompt = true;
         app.repairTargetPartId = -1;
@@ -771,18 +786,20 @@ void pollWindowsMeshRepair(App& app) {
     }
     if (target == nullptr) {
         app.status = "Die Reparatur wurde beendet, das Zielteil ist inzwischen jedoch nicht mehr aktiv.";
+        app.repairReport = app.status;
         app.repairTargetPartId = -1;
         return;
     }
 
-    app.captureUndo("Modell reparieren", UndoKind::MeshRepair, -1, true);
     if (!prepared.mesh || !prepared.spatialIndex) {
         appLogError("Windows-Modellreparatur lieferte keine indizierte Ergebnisgeometrie.");
         app.status = "Windows-Reparatur fehlgeschlagen: Ergebnisgeometrie ist unvollständig.";
+        app.repairReport = app.status + "\nLetzte Phase: " + phase;
         app.showRepairPrompt = true;
         app.repairTargetPartId = -1;
         return;
     }
+    app.captureUndo("Modell reparieren", UndoKind::MeshRepair, -1, true);
     target->mesh = std::move(prepared.mesh);
     target->spatialIndex = std::move(prepared.spatialIndex);
     target->gl.set(*target->mesh);
@@ -799,7 +816,7 @@ void pollWindowsMeshRepair(App& app) {
     app.selectedPartId = target->id;
     app.refreshMeshDiagnostics();
     app.showMeshIssues = !app.meshDiagnostics.validSolid();
-    app.showRepairPrompt = !app.meshDiagnostics.validSolid();
+    app.showRepairPrompt = true;
     app.storeActiveObjectSession();
     app.dirty = true;
     app.repairTargetPartId = -1;
@@ -808,10 +825,10 @@ void pollWindowsMeshRepair(App& app) {
         app.status = result.message + " Das Modell ist jetzt ein wasserdichter Volumenkörper.";
         appLogInfo("Windows-Modellreparatur erfolgreich abgeschlossen.");
     } else {
-        app.status = result.message + " Verbleibend: " +
-            std::to_string(app.meshDiagnostics.problemEdgeCount()) + " problematische Kanten.";
-        appLogWarning("Windows-Modellreparatur unvollständig: " +
-                      std::to_string(app.meshDiagnostics.problemEdgeCount()) +
-                      " problematische Kanten verbleiben.");
+        app.status = result.message + " Ergebnis übernommen, Modellprüfung weiterhin fehlgeschlagen: " +
+            std::to_string(app.meshDiagnostics.problemEdgeCount()) + " problematische Kanten, " +
+            std::to_string(app.meshDiagnostics.degenerateTriangles) + " entartete Dreiecke.";
+        appLogWarning(app.status);
     }
+    app.repairReport = app.status;
 }
